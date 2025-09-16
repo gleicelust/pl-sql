@@ -1,0 +1,54 @@
+CRIAR ARQUIVO
+[Entrar no diretório]
+vi nomeDoArquivo.sql
+set paste [enter]
+i
+[colar o texto]
+[esc]
+shift :wq!
+
+EXECUTAR:
+nohup sqlplus '/ as sysdba' @nomeDoArquivo.sql &
+nohup sqlplus '/ as sysdba' @exec_output_role.sql &
+nohup sqlplus '/ as sysdba' @exec_output_user.sql &
+nohup sqlplus '/ as sysdba' @exec_output_credential.sql &
+[enter]
+[enter]
+
+listar:
+ls -ltrh
+
+VERIFICAR ANDAMENTO 'se esta rodando'
+jobs -l
+
+MATAR O PROCESSO
+kill numSID
+ex:
+kill 296565
+[enter]
+
+
+Renomear:
+mv nomeAntigo.sql nomeNovo.sql
+[enter]
+
+
+
+ESTRUTURA/CONTEÚDO DO ARQUIVO:
+
+SPOOL /PASTA/nome_arquivo.sql
+
+SET HEADING OFF
+SET PAGESIZE 0
+SET FEEDBACK OFF
+SET VERIFY OFF
+SET ECHO OFF
+SET LINESIZE 32767
+
+SELECT ...
+FROM ...
+WHERE ...;
+	
+SPOOL OFF
+EXIT:
+/
