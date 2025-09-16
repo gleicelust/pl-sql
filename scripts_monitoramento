@@ -1,0 +1,1217 @@
+########################################## SCRIPTS  ##################################################
+ 
+{************************************** SCRIPTS MSSQL ************************************************
+
+{VERIFICA TAMANHO DO BANCO E ESPAÇO DISPONÍVEL
+
+EXEC sp_spaceused;
+
+-- # O tamanho total representa o espaço reservado para o banco de dados.
+-- #O espaço não alocado é a parte desse total que ainda não está sendo usada para armazenar dados, ou seja, está disponível para crescimento interno do banco.
+
+
+}
+
+{ -- VERIFICA BACKUP/RESTORE EM ANDAMENTO (Com previsão de término)
+
+SELECT 
+   session_id as SPID, command, a.text AS Query, start_time, percent_complete,
+   dateadd(second,estimated_completion_time/1000, getdate()) as estimated_completion_time
+FROM sys.dm_exec_requests r 
+   CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) a 
+WHERE r.command in ('BACKUP DATABASE','RESTORE DATABASE')
+
+}
+
+{-- VERIFICA ÚLTIMOS BACKUPS EFETUADOS NA BASE
+-- Opcao 1
+
+SELECT TOP 20 
+   --mb.backup_set_id, 
+   mb.database_name, 
+   mb.name as backup_name,
+   m.physical_device_name AS backup_location,
+   CASE mb.type
+      WHEN 'D' THEN 'Full'
+      WHEN 'I' THEN 'Incr'
+      WHEN 'L' THEN 'Log'
+   END AS backup_type,
+   mb.server_name,
+   mb.user_name,
+   mb.backup_start_date,
+   mb.backup_finish_date,
+    CAST(mb.compressed_backup_size/1048576.0 AS DECIMAL(10,2)) AS compressed_backup_size_MB,
+    CAST(CAST(mb.backup_size / 1000000 AS INT) AS VARCHAR(14)) + ' ' + 'MB' AS backup_size
+FROM msdb.dbo.backupset mb 
+INNER JOIN msdb.dbo.backupmediafamily m ON mb.media_set_id = m.media_set_id
+WHERE mb.database_name = 'NOME_BANCO' AND mb.type = 'D' -- Full
+order by backup_finish_date desc;
+
+## 
+-- Opção 2
+-- # Ultimos 7 dias
+
+SELECT
+    B.[database_name],
+    (CASE B.[type]
+        WHEN 'D' THEN 'Full Backup'
+        WHEN 'I' THEN 'Differential Backup'
+        WHEN 'L' THEN 'TLog Backup'
+        WHEN 'F' THEN 'File or filegroup'
+        WHEN 'G' THEN 'Differential file'
+        WHEN 'P' THEN 'Partial'
+        WHEN 'Q' THEN 'Differential Partial'
+    END) AS BackupType,
+    B.recovery_model AS RecoveryModel,
+    B.backup_start_date,
+    B.backup_finish_date,
+    CAST(DATEDIFF(SECOND,B.backup_start_date, B.backup_finish_date) AS VARCHAR(4)) + ' ' + 'Seconds' AS TotalTimeTaken,
+    B.expiration_date,
+    B.[user_name],
+    B.machine_name,
+    B.is_password_protected,
+    B.collation_name,
+    B.is_copy_only,
+    CONVERT(NUMERIC(20, 2), B.backup_size / 1048576) AS BackupSizeMB,
+    A.logical_device_name,
+    A.physical_device_name,
+    B.[name] AS backupset_name,
+    B.[description],
+    B.has_backup_checksums,
+    B.is_damaged,
+    B.has_incomplete_metadata
+FROM
+    sys.databases X
+    JOIN msdb.dbo.backupset B ON X.[name] = B.[database_name]
+    JOIN msdb.dbo.backupmediafamily A ON A.media_set_id = B.media_set_id
+WHERE
+    B.backup_start_date >= CONVERT(DATE, DATEADD(DAY, -7, GETDATE()))
+
+
+}
+
+{-- VERIFICA ÚLTIMOS RESTORES EFETUADOS NO BANCO
+
+DECLARE @dbname sysname = NULL, @days int = -7
+SELECT   rsh.destination_database_name AS [Database],   rsh.user_name AS [Restored By],
+CASE WHEN rsh.restore_type = 'D' THEN 'Database'
+   WHEN rsh.restore_type = 'F' THEN 'File'
+   WHEN rsh.restore_type = 'G' THEN 'Filegroup'
+   WHEN rsh.restore_type = 'I' THEN 'Differential' 
+   WHEN rsh.restore_type = 'L' THEN 'Log' 
+   WHEN rsh.restore_type = 'V' THEN 'Verifyonly' 
+   WHEN rsh.restore_type = 'R' THEN 'Revert' 
+   ELSE rsh.restore_type 
+END AS [Restore Type],
+rsh.restore_date AS [Restore Started], bmf.physical_device_name AS [Restored From], 
+rf.destination_phys_name AS [Restored To] 
+FROM msdb.dbo.restorehistory rsh
+INNER JOIN msdb.dbo.backupset bs ON rsh.backup_set_id = bs.backup_set_id
+INNER JOIN msdb.dbo.restorefile rf ON rsh.restore_history_id = rf.restore_history_id
+INNER JOIN msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
+WHERE rsh.restore_date >= DATEADD(dd, ISNULL(@days, -30), GETDATE()) 
+AND destination_database_name = ISNULL(@dbname, destination_database_name)
+--AND rsh.destination_database_name = 'NOME_BANCO'
+ORDER BY rsh.restore_history_id DESC
+
+}
+
+{VERIFICAR LOCKS ATIVOS EM UM BANCO 
+
+SELECT
+    tl.resource_type,
+    tl.resource_database_id,
+    DB_NAME(tl.resource_database_id) AS database_name,
+    tl.resource_associated_entity_id,
+    tl.request_mode,
+    tl.request_status,
+    tl.request_session_id,
+    wt.blocking_session_id,
+    wt.wait_type,
+    wt.wait_time,
+    wt.wait_resource,
+    s.text AS sql_text,
+    r.status,
+    r.command,
+    r.cpu_time,
+    r.total_elapsed_time
+FROM sys.dm_tran_locks AS tl
+JOIN sys.dm_exec_requests AS r ON tl.request_session_id = r.session_id
+LEFT JOIN sys.dm_exec_sessions AS s1 ON tl.request_session_id = s1.session_id
+LEFT JOIN sys.dm_exec_requests AS wt ON tl.request_session_id = wt.session_id
+OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS s
+WHERE tl.resource_database_id = DB_ID()
+ORDER BY tl.request_session_id;
+
+-- # resource_type: tipo de recurso bloqueado (ex: OBJECT, PAGE, KEY).
+-- # request_mode: tipo de lock (ex: S = Shared, X = Exclusive).
+-- # request_status: status do lock (GRANTED, WAIT).
+-- # request_session_id: sessão que está solicitando o lock.
+-- # blocking_session_id: sessão que está bloqueando (se houver).
+-- # sql_text: comando SQL que está sendo executado.
+
+
+-- ##### FOCAR APENAS EM SESSÕES BLOQUEADAS #####
+
+SELECT
+    r.session_id,
+    r.blocking_session_id,
+    r.status,
+    r.command,
+    r.cpu_time,
+    r.total_elapsed_time,
+    s.text AS sql_text
+FROM sys.dm_exec_requests AS r
+OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS s
+WHERE r.blocking_session_id <> 0;
+
+}
+
+{ # -- VER PROCESSAMENTO SQL SERVER
+
+SELECT er.start_time, datediff(ms, er.start_time, getdate()) elapsed_time_ms,
+er.session_id, er.wait_type, er.wait_time,
+SUBSTRING(st.text, (er.statement_start_offset/2)+1,
+((CASE er.statement_end_offset
+WHEN -1 THEN DATALENGTH(st.text)
+ELSE er.statement_end_offset
+END - er.statement_start_offset)/2) + 1) AS statement_text,
+CONVERT(XML, qp.query_plan) query_plan,
+CASE WHEN sum(eqp.estimate_row_count) > 0 THEN
+100 * SUM(eqp.row_count)/SUM(eqp.estimate_row_count)
+ELSE
+NULL
+END AS percent_done
+FROM sys.dm_exec_requests er
+INNER JOIN sys.dm_exec_query_profiles eqp ON er.session_id = eqp.session_id
+AND er.request_id = eqp.request_id
+CROSS APPLY sys.dm_exec_sql_text(er.sql_handle) st
+CROSS APPLY sys.dm_exec_text_query_plan(er.plan_handle, er.statement_start_offset, er.statement_end_offset) qp
+WHERE er.session_id > 50 and er.session_id != @@spid
+GROUP BY er.start_time, er.session_id, er.wait_type, er.wait_time, st.text,
+er.statement_start_offset, er.statement_end_offset, qp.query_plan
+HAVING SUM(eqp.estimate_row_count) > 0
+
+}
+
+{ # --ESTÁ EM EXECUÇÃO NO SQL SERVER E USANDO MUITOS RECURSOS!!!
+
+# OPÇÃO 1:
+
+SELECT
+    r.session_id,
+	--DATEDIFF(MILSECOND, r.start_time, GETDATE()) AS tempo_exec
+    r.start_time,
+    r.status,
+    r.command,
+    r.blocking_session_id,
+    DB_NAME(r.database_id) AS database_name,
+    s.program_name,
+    c.client_net_address,
+    sql_text.text,
+    query_plan.query_plan
+FROM sys.dm_exec_requests r
+JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
+JOIN sys.dm_exec_connections c ON r.session_id = c.session_id
+CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) AS sql_text
+CROSS APPLY sys.dm_exec_query_plan(r.plan_handle) AS query_plan
+WHERE s.is_user_process = 1;
+
+
+# OPÇÃO 2  -- Rodar na MASTER
+--Utilizando as DMVs e DMFs da categoria sys.dm_exec, podemos listar informações
+--detalhadas sobre as conexões existentes em uma instância de SQL Server, inclusive
+--quais as queries que cada Login está executando no momento
+
+SELECT
+ES.session_id,
+ES.login_name,
+UPPER(ES.[Status]) AS [Status],
+(SELECT DB_NAME(ER.database_id)) as databasename,
+ES.last_request_end_time,
+(SELECT [Text] FROM master.sys.dm_exec_sql_text(EC.most_recent_sql_handle )) as sqlscript,
+ES.last_request_start_time,
+ES.[host_name],
+ES.[program_name],
+ES.client_interface_name,
+ES.cpu_time,
+ES.total_scheduled_time,
+ES.total_elapsed_time,
+EC.net_transport,
+ES.nt_domain,
+ES.nt_user_name,
+EC.client_net_address,
+EC.local_net_address,
+ER.wait_type,
+ER.wait_time,
+ER.wait_resource,
+blocking_session_id 
+FROM
+sys.dm_exec_sessions ES
+INNER JOIN 
+sys.dm_exec_connections EC
+ON 
+EC.session_id = ES.session_id
+INNER JOIN 
+sys.dm_exec_requests ER 
+ON
+EC.session_id = ER.session_id
+WHERE 
+UPPER(ES.[Status])not in ('SLEEPING','DORMANT')
+ORDER BY
+Status ASC, last_request_start_time desc
+
+}
+
+{-- VERIFICA O STATUS DE EXECUÇÃO DE UM JOB
+USE msdb;
+GO
+
+SELECT
+    job.name AS JobName,
+    job.job_id AS JobID,
+    job.enabled AS IsEnabled,
+    CASE
+        WHEN jobh.run_status = 0 THEN 'Failed'
+        WHEN jobh.run_status = 1 THEN 'Succeeded'
+        WHEN jobh.run_status = 2 THEN 'Retry'
+        WHEN jobh.run_status = 3 THEN 'Canceled'
+        WHEN jobh.run_status = 4 THEN 'In Progress'
+    END AS RunStatus,
+    jobh.run_date AS LastRunDate,
+    jobh.run_time AS LastRunTime
+FROM
+    sysjobs job
+LEFT JOIN
+    sysjobhistory jobh ON job.job_id = jobh.job_id
+WHERE
+    jobh.instance_id IN (
+        SELECT MAX(instance_id)
+        FROM sysjobhistory
+        GROUP BY job_id
+    )
+ORDER BY
+    job.name;
+
+}
+
+{-- VERIFICA O LOG DETALHADO DE EXECUÇÃO DE UM JOB
+
+USE msdb;
+GO
+-- Verifica os logs de execução de um job específico
+SELECT
+    job.name AS JobName,
+    jobh.step_name AS StepName,
+    CASE
+        WHEN jobh.run_status = 0 THEN 'Failed'
+        WHEN jobh.run_status = 1 THEN 'Succeeded'
+        WHEN jobh.run_status = 2 THEN 'Retry'
+        WHEN jobh.run_status = 3 THEN 'Canceled'
+        WHEN jobh.run_status = 4 THEN 'In Progress'
+    END AS RunStatus,
+    jobh.run_date AS RunDate,
+    jobh.run_time AS RunTime,
+    jobh.sql_message_id AS MessageID,
+    jobh.sql_severity AS Severity,
+    jobh.message AS Message
+FROM
+    sysjobs job
+INNER JOIN
+    sysjobhistory jobh ON job.job_id = jobh.job_id
+WHERE
+    job.name = 'NomeDoSeuJob'
+ORDER BY
+    jobh.run_date DESC, jobh.run_time DESC;
+
+}
+
+{JOBS EM EXECUÇÃO
+
+SELECT 
+    ja.job_id,
+    j.name AS JobName,
+    ja.start_execution_date,
+    DATEDIFF(MINUTE, ja.start_execution_date, GETDATE()) AS MinutesRunning
+FROM msdb.dbo.sysjobactivity ja
+JOIN msdb.dbo.sysjobs j ON ja.job_id = j.job_id
+WHERE ja.stop_execution_date IS NULL
+  AND ja.start_execution_date IS NOT NULL;
+}
+
+{-- VERIFICA A VOLUMETRIA E ROWS DE TABELAS
+SELECT
+    SCHEMA_NAME(t.schema_id) + '.' + t.name AS TABLE_NAME,
+    SUM(ips.reserved_page_count) * 8 AS SIZE_KB,
+--  SUM(ips.reserved_page_count) * 8 / 1024 AS tamanho_mb,
+    SUM(ips.row_count) AS ROWS
+FROM
+    sys.tables t
+INNER JOIN
+    sys.dm_db_partition_stats ips ON t.object_id = ips.object_id
+WHERE
+    t.type = 'U'  -- Somente tabelas de usuário
+    AND t.is_ms_shipped = 0  -- Exclui tabelas do sistema
+GROUP BY
+    SCHEMA_NAME(t.schema_id),
+    t.name
+-- ORDER BY
+--    tamanho_mb DESC;
+}
+
+{-- VERIFICA O TAMANHO DE UMA BASE
+# 1
+exec sp_spaceused;
+#2
+SELECT
+    CAST(SUM (size * 8.0 / 1024) AS DECIMAL(10,2)) AS sizeMB,
+	CAST(SUM (size * 8.0 / (1024 * 1024)) AS DECIMAL(10,2)) AS sizeGB
+FROM sys.master_files
+WHERE database_id = DB_ID();
+
+}
+
+{-- VERIFICA HÁ QUANTO TEMPO A INSTÂNCIA FOI INICIADA PELA ÚLTIMA VEZ
+
+select sqlserver_start_time FROM sys.dm_os_sys_info;
+--
+select 'Instância '+@@SERVICENAME+' está à '+CAST(DATEDIFF(DD, sqlserver_start_time, GETDATE()) AS VARCHAR(2))+' dias ligada' FROM sys.dm_os_sys_info;
+
+}
+
+{-- LISTA OS DATABASES DA INSTÂNCIA
+#-- excluidos os databases de sistema
+select * from sys.databases where database_id > 4 order by name;
+
+
+SELECT @@SERVERNAME AS 'Instance Name';
+
+}
+
+{-- VERIFICA TRANSAÇÕES ATIVAS
+#-- transações ativas
+select * from sys.dm_tran_active_transactions;
+
+#-- locks ativos
+select * from sys.dm_tran_locks;
+}
+
+{-- VERIFICA ERROS
+#-- log de erros
+select * from sys.dm_error_log;
+
+#-- log de eventos
+select * from sys.event_log;
+}
+
+{-- VERIFICA STATUS DO BANCO/BASE
+
+select name, user_access_desc, state_desc, recovery_model_desc from sys.databases where name ='NOME_BANCO';
+
+}
+
+{ -- VERIFICA ESPAÇO INTERNO NA TEMPDB
+--- Executar na tempdb
+SELECT
+    df.name,
+    df.physical_name,
+    df.size/128 AS TotalSizeMB,
+    CAST(FILEPROPERTY(df.name, 'SpaceUsed') AS BIGINT)/128 AS UsedSpaceMB,
+    (df.size/128 - CAST(FILEPROPERTY(df.name, 'SpaceUsed') AS BIGINT)/128) AS FreeSpaceMB
+FROM
+	 sys.database_files df
+WHERE
+	df.name like 'temp%'
+	
+---------
+-- Se houver espaço lógico suficiente não precisa se preocupar, mais se o espaço lógico estiver no limite somente um shirink irá resolver
+---------
+
+}
+
+{-- QUAIS AS QUERIES QUE CADA LOGIN ESTÁ EXECUTANDO NO MOMENTO
+
+SELECT
+ES.session_id,
+ES.login_name,
+UPPER(ES.[Status]) AS [Status],
+(SELECT DB_NAME(ER.database_id)) as databasename,
+ES.last_request_end_time,
+(SELECT [Text] FROM master.sys.dm_exec_sql_text(EC.most_recent_sql_handle )) as sqlscript,
+ES.last_request_start_time,
+ES.[host_name],
+ES.[program_name],
+ES.client_interface_name,
+ES.cpu_time,
+ES.total_scheduled_time,
+ES.total_elapsed_time,
+EC.net_transport,
+ES.nt_domain,
+ES.nt_user_name,
+EC.client_net_address,
+EC.local_net_address,
+ER.wait_type,
+ER.wait_time,
+ER.wait_resource,
+blocking_session_id 
+FROM
+sys.dm_exec_sessions ES
+INNER JOIN 
+sys.dm_exec_connections EC
+ON 
+EC.session_id = ES.session_id
+INNER JOIN 
+sys.dm_exec_requests ER 
+ON
+EC.session_id = ER.session_id
+WHERE 
+UPPER(ES.[Status])not in ('SLEEPING','DORMANT')
+ORDER BY
+Status ASC, last_request_start_time desc;
+
+}
+
+{ -- QUERIES ATIVAS
+}
+
+----------- JOBS -----------
+
+{ -- VERIFICA OS JOBS EXISTENTES
+
+USE msdb;
+GO
+
+SELECT
+    job_id,
+    name AS job_name,
+    enabled,
+    description,
+    date_created,
+    date_modified
+FROM
+    dbo.sysjobs;
+GO
+
+# Verificando os Scripts Shell (Steps dos Jobs)
+USE msdb;
+GO
+
+SELECT
+    job_id,
+    step_id,
+    step_name,
+    subsystem,
+    command
+FROM
+    dbo.sysjobsteps;
+GO
+
+# Combinando Informações de Jobs e Steps
+USE msdb;
+GO
+
+SELECT
+    j.job_id,
+    j.name AS job_name,
+    j.enabled,
+    j.description,
+    j.date_created,
+    j.date_modified,
+    s.step_id,
+    s.step_name,
+    s.subsystem,
+    s.command
+FROM
+    dbo.sysjobs j
+JOIN
+    dbo.sysjobsteps s ON j.job_id = s.job_id;
+GO
+
+# jobs que executam scripts shell (por exemplo, scripts `.bat` ou `.sh`), você pode filtrar pelo `subsystem` na tabela `sysjobsteps`
+USE msdb;
+GO
+
+SELECT
+    j.job_id,
+    j.name AS job_name,
+    s.step_id,
+    s.step_name,
+    s.subsystem,
+    s.command
+FROM
+    dbo.sysjobs j
+JOIN
+    dbo.sysjobsteps s ON j.job_id = s.job_id
+WHERE
+    s.subsystem = 'CmdExec'; -- 'CmdExec' é o subsistema para comandos do shell
+GO
+
+
+}
+
+{------------- REQUESTS / SESSIONS / RECURSOS / REPLICAÇÃO -----------
+
+SELECT * FROM sys.dm_exec_requests; -- Mostra informações sobre as requisições atuais no SQL Server
+SELECT * FROM sys.dm_exec_sessions; -- Mostra informações sobre as sessões atuais no SQL Server
+SELECT * FROM sys.dm_db_resource_stats; -- Mostra informações sobre o uso de recursos do banco de dados
+SELECT * FROM sys.dm_hadr_database_replica_states; -- Mostra informações sobre o estado de replicação em ambiente HA
+}
+
+{-- SESSÕES QUE MAIS ESTÃO USANDO CPU E MEMÓRIA 
+
+-- VERIFICAR SESSÕES ATIVAS POR DATABASE (com data do ultimo login do usuário)
+SELECT
+    s.session_id AS SID,
+    s.login_name AS USERNAME,
+    s.login_time AS LOGON_TIME,
+    s.status AS STATUS,
+    s.original_login_name AS OSUSER,
+    s.host_name AS MACHINE,
+    s.program_name AS PROGRAM,
+    d.name AS DATABASE_NAME,
+	s.cpu_time AS CPU_TIME,
+	s.memory_usage AS MEMORY_USAGE
+FROM sys.dm_exec_sessions s
+JOIN sys.databases d ON s.database_id = d.database_id 
+WHERE name = 'NOME_BANCO'
+order by cpu_time desc;
+
+}
+
+{LISTA TODAS AS TABELAS DO BANCO
+SELECT 
+    TABLE_SCHEMA,
+    TABLE_NAME
+FROM 
+    INFORMATION_SCHEMA.TABLES
+WHERE 
+    TABLE_TYPE = 'BASE TABLE'
+ORDER BY 
+    TABLE_SCHEMA, TABLE_NAME;
+}
+
+}
+
+
+{************************************** SCRIPTS ORACLE ***********************************************
+
+{VERIFICA SE A INSTÂNCIA ESTÁ NO AR
+# -- Verifica status do database
+srvctl status database -d instancename
+
+
+ 
+}
+
+{VISÃO GERAL DAS INSTÂNCIAS DO BANCO (STATUS, ROLE, MODO DE ABERTURA, TEMPO DE ATIVIDADE)
+set pagesize 300
+set linesize 9999
+col instance_name for a15
+col host_name for a20
+col startup_time for a25
+col database_role for a15
+col uptime for a28
+
+select * from (
+  select
+    i.host_name,
+    i.instance_name,
+    i.database_status,
+    i.status,
+	d.open_mode,
+    d.database_role,
+    to_char(i.startup_time,'DD-MON-YYYY HH24:MI') startime,
+    floor(sysdate - i.startup_time) || ' Dias ' || trunc(24 * ((sysdate - i.startup_time) - trunc(sysdate - i.startup_time))) || ' Horas ' ||
+    mod(trunc(1440 * ((sysdate - i.startup_time) - trunc(sysdate - i.startup_time))), 60) || ' Minutos ' as uptime
+  from gv$instance i, gv$database d
+)
+group by host_name, instance_name, database_status, status, database_role, open_mode, startime, uptime;
+
+}
+
+{VERIFICAR SESSÕES/TRANSAÇÕES ATIVAS NO BANCO
+set linesize 9999
+set pagesize 1000
+col elapsed_time for a10
+col username format a10
+col service_name format a15
+col inst_id for 9
+col sid for 99999
+col machine format a30
+col serial# for 99999
+col sql_text for a50
+col event for a30
+
+select distinct inst_id, sid, serial#, username, machine, dbms_lob.substr(sql_text,50,1) as sql_text, sql_id, elapsed_time, status, event,service_name from (
+select s.inst_id, s.sid, s.serial#, s.username, s.machine, gv.sql_text, gv.sql_id,
+TO_CHAR(TRUNC(s.last_call_et/3600),'FM9900') || ':' || TO_CHAR(TRUNC(MOD(s.last_call_et,3600)/60),'FM00') || ':' || TO_CHAR(MOD(s.last_call_et,60),'FM00') as elapsed_time,
+s.status, s.event,s.SERVICE_NAME
+from gv$sql gv, gv$session s
+where gv.sql_id=s.sql_id
+and gv.inst_id=s.inst_id
+and username is not null
+and s.status='ACTIVE'
+order by elapsed_time desc
+)
+order by elapsed_time desc;
+
+------------------------------------------------------------------------------------------------------
+
+-- #contar as sessões do banco de determinado SQL_ID
+select count(1) as sessoes from v$session where SQL_ID = 'aat260aaf072b' and status='ACTIVE';
+
+select sid, serial#, sql_id, username, command, status, schemaname, osuser, machine, program  from v$session;
+}
+
+{QUERIES ATIVAS
+col inst_id format 9
+col sid format 99999
+col serial# format 99999
+col username format a10
+col osuser format a10 
+col sql_id format a15 
+col sql_exec_start format a20
+col last_call_et format a8
+col machine format a15 
+col program format a30 
+col module format a30
+col event format a30
+col wait_class format a30 
+
+
+ select
+ inst_id,
+ sid,
+ serial#,
+ username,
+ status,
+ osuser,
+ sql_id,
+ to_char (sql_exec_start, 'DD-MM-YYYY HH24:MI:SS') as sql_exec_start,
+ to_char (to_date(last_call_et,'sssss'),'HH24:MI:SS') as last_call_et,
+ machine,
+ port,
+ terminal,
+ program,
+ module,
+ event,
+ wait_class
+ from gv$session where 
+ last_call_et > 0 and status = 'ACTIVE' and type = 'USER' and username is not null
+ order by last_call_et desc;
+ 
+ ---------
+ 
+ SELECT
+       gname,
+       dbname,
+       file_type,
+       round(SUM(space)/1024/1024) mb,
+       round(SUM(space)/1024/1024/1024) gb,
+       COUNT(*) "#FILES"
+   FROM
+       (   SELECT
+               gname,
+               regexp_substr(full_alias_path, '[[:alnum:]_]*',1,4) dbname,
+               file_type,
+               space
+           FROM
+               (   SELECT
+                       concat('+'||gname, sys_connect_by_path(aname, '/')) full_alias_path,
+                       system_created,
+                       file_type,
+                       space,
+                       gname
+                   FROM
+                       (   SELECT
+                               b.name            gname,
+                               a.parent_index    pindex,
+                               a.name            aname,
+                               a.reference_index rindex ,
+                               a.system_created,
+                               c.type file_type,
+                               c.space
+                           FROM
+                               v$asm_alias a,
+                               v$asm_diskgroup b,
+                               v$asm_file c
+                           WHERE
+                               a.group_number = b.group_number
+                           AND a.group_number = c.group_number(+)
+                           AND a.file_number = c.file_number(+)
+                           AND a.file_incarnation = c.incarnation(+) )
+                   START WITH (mod(pindex, power(2, 24))) = 0
+                   AND rindex IN
+                       (   SELECT a.reference_index
+                           FROM   v$asm_alias a,
+                                  v$asm_diskgroup b
+                           WHERE  a.group_number = b.group_number
+                           AND    mod(a.parent_index, power(2, 24)) = 0
+                       ) CONNECT BY prior rindex = pindex )
+           WHERE NOT file_type IS NULL
+           and   system_created = 'Y' )
+   GROUP BY
+       gname,
+       dbname,
+       file_type
+   ORDER BY
+       gname,
+       dbname,
+       file_type
+}
+
+{VERIFICA SE TEM BLOQUEIOS/LOCK NA INSTÂNCIA  
+#Oracle Sql Developer
+
+select 'SID ' || l1.sid || ' esta bloqueando ' || l2.sid || ' na instancia ' || s.inst_id as blocking
+from gv$lock l1, gv$lock l2, gv$session s
+where l1.block = 1
+and l2.request > 0
+and l1.id1 = l2.id1 
+and l1.id2 = l2.id2
+and s.sid = l1.sid;
+
+}
+
+{VERIFICA SE O STATUS DA REPLICAÇÃO MRPO (MANAGED RECOVERY PROCESS) ESTÁ APLICADO
+
+select inst_id, process, status, thread#, sequence#, block#, blocks from gv$managed_standby where process in ('MRP0');
+
+-- # verificar se há diferenças nas sequencias e logs arquivados e aplicados
+
+SELECT ARCH.THREAD# "Thread", ARCH.SEQUENCE# "Last Sequence Received", APPL.SEQUENCE# "Last Sequence Applied", (ARCH.SEQUENCE# - APPL.SEQUENCE#) "Difference" 
+FROM (SELECT THREAD# ,SEQUENCE# FROM V$ARCHIVED_LOG WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) 
+FROM V$ARCHIVED_LOG GROUP BY THREAD#)) ARCH, (SELECT THREAD# ,SEQUENCE# FROM V$LOG_HISTORY WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$LOG_HISTORY GROUP BY THREAD#)) 
+APPL WHERE ARCH.THREAD# = APPL.THREAD# ORDER BY 1;
+
+}
+
+{VERIFICAR SE O BANCO É PRIMÁRIO OU STANDYBY / RAC OU SINGLE INSTANCE
+select * from (
+select
+i.host_name
+,i.instance_name
+,i.status
+,d.database_role
+,to_char(i.startup_time,'DD-MON-YYYY HH24:MI') startime
+,floor(sysdate - i.startup_time)|| ' Dias '||trunc( 24*((sysdate-i.startup_time)-trunc(sysdate-i.startup_time)))||' Horas '||
+mod(trunc(1440*((sysdate-i.startup_time)-trunc(sysdate-i.startup_time))), 60)||' Minutos '  as uptime
+from gv$instance i, gv$database d)
+group by host_name,instance_name,status,database_role,startime,uptime;
+
+## Abaixo a consulta para facilitar esse conceito se estamos logados no banco primary ou dataguard.
+
+set lines 300 pages 300
+col hotname for a25
+ALTER SESSION SET NLS_DATE_FORMAT='DD/MM/YYYY HH24:MI:SS';
+set lines 300 pages 300
+col hotname for a25
+ALTER SESSION SET NLS_DATE_FORMAT='DD/MM/YYYY HH24:MI:SS';
+select  it.INSTANCE_NAME,it.HOST_NAME,it.STARTUP_TIME,it.STATUS,db.OPEN_MODE
+from  gv$database db, gv$instance it
+where db.INST_ID=it.INST_ID
+order by it.INSTANCE_NAME;
+
+#--O que vai mudar é coluna OPEN_MODE
+"READ ONLY WITH APPLY" --->> DATAGUARD
+"READ WRITE" --->> PRIMARY
+
+}
+
+{VERIFICA BACKUPS DOS ÚLTIMOS 7 DIAS
+
+set feedback off
+set pagesize 300
+set linesize 9999
+
+col BACKUP_TYPE for a20
+col STATUS for a30
+col START_TIME for a20 
+col END_TIME for a20 
+col BACKUP_SIZE for a15
+col OUTPUT_DEVICE for a15
+
+with backup_data as (
+select 
+input_type as backup_type,
+status,
+to_char(start_time,'dd/mm/yyyy hh24:mi:ss') as start_time,
+to_char(end_time,'dd/mm/yyyy hh24:mi:ss') as end_time,
+trunc((elapsed_seconds/60),2) as elapsed_seconds,
+output_bytes_display as backup_size,
+output_device_type as output_device,
+row_number() over(partition by input_type order by end_time desc) as rn
+from v$rman_backup_job_details
+where start_time > sysdate-7
+)
+select 
+backup_type,
+status,
+start_time,
+end_time,
+elapsed_seconds,
+backup_size,
+output_device 
+from backup_data
+where rn = 1
+order by backup_type;
+
+}
+
+{VERIFICA BACKUP FULL EM ANDAMENTO COM PREVISÃO DE TÉRMINO
+
+------- OPCAO 1 -------
+set lines 600 pages 100
+col dbsize_mbytes      for 99,999,990.00 justify right head "Tam. Total"
+col input_mbytes       for 99,999,990.00 justify right head "Lidos MB"
+col output_mbytes      for 99,999,990.00 justify right head "Gravados MB"
+col output_device_type for a10           justify left head "Device"
+col complete           for 990.00        justify right head "Completado %"
+col compression        for 990.00        justify right head "Compress|% ORIG"
+col est_complete       for a20           head "Estimativa"
+col recid              for 9999999       head "ID"
+col START_TIME         for a20
+select recid
+     , output_device_type
+     , dbsize_mbytes
+     , input_bytes/1024/1024 input_mbytes
+     , output_bytes/1024/1024 output_mbytes
+     , (output_bytes/input_bytes*100) compression
+     , (mbytes_processed/dbsize_mbytes*100) complete
+     , to_char(start_time, 'dd/mon/yyyy hh24:mi') start_time
+     , to_char(start_time + (sysdate-start_time)/(mbytes_processed/dbsize_mbytes),'DD-MON-YYYY HH24:MI:SS') est_complete
+  from v$rman_status rs
+     , (select sum(bytes)/1024/1024 dbsize_mbytes from v$datafile)
+ where status='RUNNING'
+   and output_device_type is not null
+/
+
+
+
+------- OPCAO 2 -------
+set lines 200 pages 50000 timin on
+COL "SID/SERIAL" FORMAT A15       HEADING 'SID/SERIAL@I|-' JUSTIFY CENTER
+COL USERNAME     FORMAT A15        HEADING 'USERNAME|-'     JUSTIFY CENTER
+COL "OPERATION"  FORMAT A60        HEADING 'OPERATION|-'    JUSTIFY CENTER
+COL DONE         FORMAT A11        HEADING 'DONE|-'         JUSTIFY CENTER
+COL TOTAL        FORMAT A11        HEADING 'TOTAL|-'        JUSTIFY CENTER
+COL STARTED      FORMAT A19        HEADING 'STARTED|-' JUSTIFY CENTER
+COL ELAPSED      FORMAT A9         HEADING 'ELAPSED|hhh:mm:ss' JUSTIFY CENTER
+COL ESTIMATED    FORMAT A9         HEADING 'ESTIMATED|hhh:mm:ss' JUSTIFY CENTER
+COL "% DONE"     FORMAT A8         HEADING 'DONE %|-' JUSTIFY CENTER
+COL EXECUTION    FORMAT A9         HEADING 'EXECUTION|-' JUSTIFY CENTER
+COL SQL_ID       FORMAT A14        HEADING 'SQL_ID|-' JUSTIFY CENTER
+COL FINISH_TIME  FORMAT A11        HEADING 'PROJECTION|FINISH TIME' JUSTIFY CENTER
+--SET COLSEP '|'
+SELECT S.SID || ',' || S.SERIAL#|| CASE WHEN S.INST_ID IS NOT NULL THEN ',@' || S.INST_ID END  AS "SID/SERIAL",
+       SUBSTR(S.USERNAME,1,10)||DECODE(S.USERNAME,'SYS',SUBSTR(NVL2(S.MODULE,' [',NULL)||UPPER(S.MODULE),1,6)||NVL2(S.MODULE,']',NULL)) AS USERNAME,
+           S.SQL_ID,
+       substr(DECODE(TARGET_DESC, NULL, DECODE(TARGET, NULL, OPNAME, CONCAT(OPNAME, CONCAT(' - ', TARGET))),
+       DECODE(TARGET, NULL, CONCAT(OPNAME, CONCAT(' : ',TARGET_DESC)),
+       CONCAT(OPNAME, CONCAT(' : ', CONCAT(TARGET_DESC, CONCAT(' - ',TARGET)))))),1,50) "OPERATION",
+       TO_CHAR(sl.START_TIME, 'DD/MM/YYYY HH24:MI:SS') STARTED,
+       TO_CHAR(TRUNC(ELAPSED_SECONDS/3600) , 'FM000') || ':' ||
+       TO_CHAR(TRUNC(MOD(ELAPSED_SECONDS, 3600)/60), 'FM00') || ':' ||
+       TO_CHAR(MOD(MOD(ELAPSED_SECONDS, 3600), 60) , 'FM00') ELAPSED,
+       TO_CHAR(TRUNC(TIME_REMAINING/3600) , 'FM000') || ':' ||
+       TO_CHAR(TRUNC(MOD(TIME_REMAINING, 3600)/60), 'FM00') || ':' ||
+       TO_CHAR(MOD(MOD(TIME_REMAINING, 3600), 60) , 'FM00') ESTIMATED,
+       TO_CHAR(TOTALWORK, 'FM9,999,999,990') TOTAL, TO_CHAR(SOFAR, 'FM9,999,999,990') DONE,
+       TO_CHAR(SOFAR / TOTALWORK * 100, '990.99') "% DONE" ,
+           TO_CHAR(TIME_REMAINING/(24*3600)+SYSDATE,'DD/MM HH24:MI') FINISH_TIME
+  FROM GV$SESSION_LONGOPS SL, GV$SESSION S, GV$PROCESS P
+WHERE SL.SID= S.SID
+AND SL.SERIAL#=S.SERIAL#
+and sl.INST_ID = s.INST_ID
+AND (SL.SOFAR/SL.TOTALWORK)*100 < 100
+AND SL.TOTALWORK > 0
+AND S.PADDR = P.ADDR
+and s.INST_ID = p.INST_ID
+order by S.SQL_ID||SOFAR||S.SID||S.INST_ID desc , ELAPSED
+/
+ 
+
+}
+  
+{VERIFICA USO DE TABLESPACES (USO SUPERIOR A 95%) -----> (NÃO ESTÁ RODANDO NO SQLPLUS)
+
+select * from (
+select total.ts tablespace, DECODE(total.mb,null,'OFFLINE',dbat.status) status, total.mb total_mb,NVL(total.mb - free.mb,total.mb) used_mb, NVL(free.mb,0) free_mb, DECODE(total.mb,NULL,0,NVL(ROUND((total.mb - free.mb)/(total.mb)*100,2),100)) pct_used,CASE WHEN (total.mb IS NULL) THEN '['||RPAD(LPAD('OFFLINE',13,'-'),20,'-')||']' ELSE '['|| DECODE(free.mb, null,'XXXXXXXXXXXXXXXXXXXX',NVL(RPAD(LPAD('X',trunc((100-ROUND( (free.mb)/(total.mb) * 100, 2))/5),'X'),20,'-'),'--------------------'))||']' END as GRAPH from (select tablespace_name ts, sum(bytes)/1024/1024 mb
+ from dba_data_files group by tablespace_name) total,(select tablespace_name ts, sum(bytes)/1024/1024 mb 
+ from dba_free_space group by tablespace_name) free, dba_tablespaces dbat 
+ where total.ts not in ('TEMP','TMP') AND total.ts=free.ts(+) and total.ts=dbat.tablespace_name 
+ UNION ALL 
+ select sh.tablespace_name,'TEMP', SUM(sh.bytes_used+sh.bytes_free)/1024/1024 total_mb, SUM(sh.bytes_used)/1024/1024 used_mb, SUM(sh.bytes_free)/1024/1024 free_mb,ROUND(SUM(sh.bytes_used)/SUM(sh.bytes_used+sh.bytes_free)*100,2) pct_used, '['||DECODE(SUM(sh.bytes_free),0,'XXXXXXXXXXXXXXXXXXXX', NVL(RPAD(LPAD('X',(TRUNC(ROUND((SUM(sh.bytes_used)/SUM(sh.bytes_used+sh.bytes_free))*100,2)/5)),'X'),20,'-'),'--------------------'))||']' 
+FROM v$temp_space_header sh WHERE sh.tablespace_name NOT IN ('TEMP','TMP') GROUP BY tablespace_name )
+where pct_used > 95
+order by 6 desc;
+
+}
+
+{VERIFICA TABLESPACES E MAXBYTES - STATUS /  ALLOCATED / USED_SPACE / FREE_SPACE / USED % / MAX_SIZE / MAX_USED
+
+set echo off;
+set pagesize 10000 linesize 300 tab off
+--
+col tablespace_name format A22             heading  "Tablespace"
+col status          format A15
+col ts_type         format A13             heading  "TS_Type"
+col segments        format     999999      heading  "Segments"
+col files           format       9999
+col allocated_mb    format  9,999,990.00   heading  "Allocated_Size|(Mb)"
+col used_mb         format  9,999,990.00   heading  "Used_Space|(Mb)"
+col Free_mb         format    999,990.00   heading  "Free_Space|(Mb)"
+col used_pct        format        999      heading  "Used|%"
+col max_ext_mb      format 99,999,990.00   heading  "Max_Size|(Mb)"
+col max_free_mb     format  9,999,990.00   heading  "Max_Free|(Mb)"
+col max_used_pct    format        999      heading  "Max_Used|(%)"
+--
+BREAK ON REPORT
+COMPUTE SUM LABEL "TOTAL SUM ==========>" AVG LABEL "AVERAGE   ==========>" OF segments files allocated_mb used_mb Free_MB max_ext_mb ON REPORT
+
+WITH df AS (SELECT tablespace_name, SUM(bytes) bytes, COUNT(*) cnt, DECODE(SUM(DECODE(autoextensible,'NO',0,1)), 0, 'NO', 'YES') autoext, sum(DECODE(maxbytes,0,bytes,maxbytes)) maxbytes FROM dba_data_files GROUP BY tablespace_name),
+     tf AS (SELECT tablespace_name, SUM(bytes) bytes, COUNT(*) cnt, DECODE(SUM(DECODE(autoextensible,'NO',0,1)), 0, 'NO', 'YES') autoext, sum(DECODE(maxbytes,0,bytes,maxbytes)) maxbytes FROM dba_temp_files GROUP BY tablespace_name),
+     tm AS (SELECT tablespace_name, used_percent FROM dba_tablespace_usage_metrics),
+     ts AS (SELECT tablespace_name, COUNT(*) segcnt FROM dba_segments GROUP BY tablespace_name)
+SELECT d.tablespace_name,
+       d.status,
+       DECODE(d.contents,'PERMANENT',DECODE(d.extent_management,'LOCAL','LM','DM'),'TEMPORARY','TEMP',d.contents)||'-'||DECODE(d.allocation_type,'UNIFORM','UNI','SYS')||'-'||decode(d.segment_space_management,'AUTO','ASSM','MSSM') ts_type,
+       a.cnt files,
+       NVL(s.segcnt,0) segments,
+       ROUND(NVL(a.bytes / 1024 / 1024, 0), 3) Allocated_MB,
+       ROUND(NVL(a.bytes - NVL(f.bytes, 0), 0)/1024/1024,3) Used_MB,
+       ROUND(NVL(f.bytes, 0) / 1024 / 1024, 3) Free_MB,
+       ROUND(NVL((a.bytes - NVL(f.bytes, 0)) / a.bytes * 100, 0), 2) Used_pct,
+       ROUND(a.maxbytes / 1024 / 1024, 3)  max_ext_mb,
+       ROUND(NVL(m.used_percent,0), 2) Max_used_pct
+  FROM dba_tablespaces d, df a, tm m, ts s, (SELECT tablespace_name, SUM(bytes) bytes FROM dba_free_space GROUP BY tablespace_name) f
+ WHERE d.tablespace_name = a.tablespace_name(+)
+   AND d.tablespace_name = f.tablespace_name(+)
+   AND d.tablespace_name = m.tablespace_name(+)
+   AND d.tablespace_name = s.tablespace_name(+)
+   AND NOT d.contents = 'UNDO'
+   AND NOT ( d.extent_management = 'LOCAL' AND d.contents = 'TEMPORARY' )
+UNION ALL
+-- TEMP TS
+SELECT d.tablespace_name,
+       d.status,
+       DECODE(d.contents,'PERMANENT',DECODE(d.extent_management,'LOCAL','LM','DM'),'TEMPORARY','TEMP',d.contents)||'-'||DECODE(d.allocation_type,'UNIFORM','UNI','SYS')||'-'||decode(d.segment_space_management,'AUTO','ASSM','MSSM') ts_type,
+       a.cnt,
+       0,
+       ROUND(NVL(a.bytes / 1024 / 1024, 0), 3) Allocated_MB,
+       ROUND(NVL(t.ub*d.block_size, 0)/1024/1024, 3) Used_MB,
+       ROUND((NVL(a.bytes ,0)/1024/1024 - NVL((t.ub*d.block_size), 0)/1024/1024), 3) Free_MB,
+       ROUND(NVL((t.ub*d.block_size) / a.bytes * 100, 0), 2) Used_pct,
+       ROUND(a.maxbytes / 1024 / 1024, 3)  max_size_mb,
+       ROUND(NVL(m.used_percent,0), 2) Max_used_pct
+  FROM dba_tablespaces d, tf a, tm m, (SELECT ss.tablespace_name , sum(ss.used_blocks) ub FROM gv$sort_segment ss GROUP BY ss.tablespace_name) t
+ WHERE d.tablespace_name = a.tablespace_name(+)
+   AND d.tablespace_name = t.tablespace_name(+)
+   AND d.tablespace_name = m.tablespace_name(+)
+   AND d.extent_management = 'LOCAL'
+   AND d.contents = 'TEMPORARY'
+UNION ALL
+-- UNDO TS
+SELECT d.tablespace_name,
+       d.status,
+       DECODE(d.contents,'PERMANENT',DECODE(d.extent_management,'LOCAL','LM','DM'),'TEMPORARY','TEMP',d.contents)||'-'||DECODE(d.allocation_type,'UNIFORM','UNI','SYS')||'-'||decode(d.segment_space_management,'AUTO','ASSM','MSSM') ts_type,
+       a.cnt,
+       NVL(s.segcnt,0) segments,
+       ROUND(NVL(a.bytes / 1024 / 1024, 0), 3) Allocated_MB,
+       ROUND(NVL(u.bytes, 0) / 1024 / 1024, 3) Used_MB,
+       ROUND(NVL(a.bytes - NVL(u.bytes, 0), 0)/1024/1024, 3) Free_MB,
+       ROUND(NVL(u.bytes / a.bytes * 100, 0), 2) Used_pct,
+       ROUND(a.maxbytes / 1024 / 1024, 3)  max_size_mb,
+       ROUND(NVL(m.used_percent,0), 2) Max_used_pct
+FROM dba_tablespaces d, df a, tm m, ts s, (SELECT tablespace_name, SUM(bytes) bytes FROM dba_undo_extents where status in ('ACTIVE','UNEXPIRED') GROUP BY tablespace_name) u
+WHERE d.tablespace_name = a.tablespace_name(+)
+AND d.tablespace_name = u.tablespace_name(+)
+AND d.tablespace_name = m.tablespace_name(+)
+AND d.tablespace_name = s.tablespace_name(+)
+AND d.contents = 'UNDO'
+ORDER BY 1 ;
+--
+set echo on;
+
+}
+
+{VERIFICA TABLESPACES (SYSTEM / SYSAUX / USERS)
+
+set linesize 999
+col tablespace for a20
+col status for a10
+col graph for a25
+select * from (
+select total.ts tablespace, DECODE(total.mb,null,'OFFLINE',dbat.status) status, total.mb total_mb,NVL(total.mb - free.mb,total.mb) used_mb, NVL(free.mb,0) free_mb, DECODE(total.mb,NULL,0,NVL(ROUND((total.mb - free.mb)/(total.mb)*100,2),100)) pct_used,CASE WHEN (total.mb IS NULL) THEN '['||RPAD(LPAD('OFFLINE',13,'-'),20,'-')||']' ELSE '['|| DECODE(free.mb, null,'XXXXXXXXXXXXXXXXXXXX',NVL(RPAD(LPAD('X',trunc((100-ROUND( (free.mb)/(total.mb) * 100, 2))/5),'X'),20,'-'),'--------------------'))||']' END as GRAPH from (select tablespace_name ts, sum(bytes)/1024/1024 mb
+ from dba_data_files group by tablespace_name) total,(select tablespace_name ts, sum(bytes)/1024/1024 mb
+ from dba_free_space group by tablespace_name) free, dba_tablespaces dbat
+ where total.ts not in ('TEMP','TMP') AND total.ts=free.ts(+) and total.ts=dbat.tablespace_name and dbat.bigfile = 'NO' and dbat.contents not in ('UNDO')
+/* UNION ALL
+ select sh.tablespace_name,'TEMP', SUM(sh.bytes_used+sh.bytes_free)/1024/1024 total_mb, SUM(sh.bytes_used)/1024/1024 used_mb, SUM(sh.bytes_free)/1024/1024 free_mb,ROUND(SUM(sh.bytes_used)/SUM(sh.bytes_used+sh.bytes_free)*100,2) pct_used, '['||DECODE(SUM(sh.bytes_free),0,'XXXXXXXXXXXXXXXXXXXX', NVL(RPAD(LPAD('X',(TRUNC(ROUND((SUM(sh.bytes_used)/SUM(sh.bytes_used+sh.bytes_free))*100,2)/5)),'X'),20,'-'),'--------------------'))||']'
+FROM v$temp_space_header sh WHERE sh.tablespace_name NOT IN ('TEMP','TMP') GROUP BY tablespace_name 
+*/
+)
+--where pct_used > 95
+order by 6 desc;
+
+}
+
+{VERIFICAR O TAMANHO DE UM SCHEMA
+SELECT owner, SUM(bytes) / 1024 / 1024 AS size_mb FROM dba_segments WHERE owner = 'NOME_DO_SCHEMA' GROUP BY owner;
+}
+
+{VERIFICAR O TAMANHO DE UMA TABELA
+SELECT segment_name, segment_type, SUM(bytes) / 1024 / 1024 AS size_mb FROM dba_segments WHERE segment_name = 'NOME_TABELA' AND owner = 'NOME_SCHEMA' GROUP BY segment_name, segment_type;
+ 
+-- #VERIFICAR TAMANHO DA TABELA COM SEUS ÍNDICES
+SELECT segment_name, segment_type, SUM(bytes) / 1024 / 1024 AS size_mb FROM dba_segments
+WHERE (segment_name = 'NOME_TABELA' OR segment_name IN (SELECT index_name FROM dba_indexes 
+WHERE table_name = 'NOME_TABELA')) AND owner = 'NOME_SCHEMA' GROUP BY segment_name, segment_type;
+}
+
+{VERIFICAR ESPAÇO LIVRE EM TABLESPACE TEMP
+
+select TABLESPACE_NAME,TABLESPACE_SIZE/1024/1024 size_mb, FREE_SPACE/1024/1024 free_mb, ALLOCATED_SPACE/1024/1024 allocate_mb from DBA_TEMP_FREE_SPACE;
+
+SELECT
+    df.TABLESPACE_NAME,
+    ROUND(SUM(df.BYTES) / 1024 / 1024 / 1024, 2) AS SIZE_GB,
+    ROUND((SUM(df.BYTES) - SUM(fs.BYTES)) / 1024 / 1024 / 1024, 2) AS USED_GB,
+    ROUND(SUM(fs.BYTES) / 1024 / 1024 / 1024, 2) AS SIZE_FREE,
+    ROUND(((SUM(df.BYTES) - SUM(fs.BYTES)) / SUM(df.BYTES)) * 100, 2) AS PORCENTAGEM
+FROM
+    DBA_DATA_FILES df
+LEFT JOIN
+    (SELECT TABLESPACE_NAME, SUM(BYTES) AS BYTES
+     FROM DBA_FREE_SPACE
+     GROUP BY TABLESPACE_NAME) fs
+    ON df.TABLESPACE_NAME = fs.TABLESPACE_NAME
+GROUP BY
+    df.TABLESPACE_NAME
+ORDER BY
+    TABLESPACE_NAME;
+}
+
+{VERIFICA  OPERAÇÕES DE LONGA DURAÇÃO, INCLUINDO A COLETA DE ESTATÍSTICAS PARALELIZADAS
+
+SELECT sl.sid,
+       sl.serial#,
+       sl.opname,
+       sl.sofar,
+       sl.totalwork,
+       ROUND(sl.sofar / sl.totalwork * 100, 2) AS pct_complete,
+       sl.elapsed_seconds,
+       sl.time_remaining,
+       sl.sql_id
+FROM v$session_longops sl
+WHERE sl.opname LIKE 'Gather%' -- indica que estamos buscando operações relacionadas à coleta de estatísticas
+AND sl.totalwork > 0
+AND sl.sofar < sl.totalwork;
+
+}
+
+{COUNT DOS OBJETOS DO SCHEMA
+-- #evidencia de restauração de schema
+select object_type, count(*) from all_objects where owner = 'XXX' group by object_type;
+
+
+select OWNER, OBJECT_NAME, OBJECT_TYPE, STATUS, DEFAULT_COLLATION from all_objects where OBJECT_TYPE = 'TABLE' AND OWNER = 'XXX';
+
+}
+
+{LISTAR TODOS OS USUÁRIOS/SCHEMAS
+
+SELECT username FROM dba_users ORDER BY username;
+
+}
+
+{LISTAR APENAS OS SCHEMAS QUE POSSUEM TABELAS
+
+SELECT DISTINCT owner FROM all_tables ORDER BY owner;
+
+}
+
+
+********* # ROLES # *********
+
+{VERIFICA SE UM USUÁRIO TEM ACESSO A UMA ROLE
+select * from dba_role_privs where granted_role = 'ROLENAME';
+
+--
+select * from dba_role_privs where grantee = 'USERXXX' and granted_role = 'ROLENAME';
+}
+
+{VER TODAS AS ROLES ATRIBUÍDAS A UM USUÁRIO
+
+SELECT * FROM DBA_ROLE_PRIVS WHERE GRANTEE = 'USERXXX';
+
+-- VERIFICAR DO USUARIO LOGADO
+
+SELECT * FROM USER_ROLE_PRIVS;
+
+
+}
+
+{VERIFICAR DUMP EM ANDAMENTO
+ps -ef | grep expdp
+
+}
+
+# ***LOGS ****
+
+{VERIFICAR LOGS DO BANCO ORACLE
+-- verificar caminho do alertlog
+select VALUE FROM V$DIAG_INFO WHERE NAME = 'Diag Trace';
+
+-- logar no diretório
+cd /.../diag/rdbms/.../.../trace
+
+-- Via ADRCI
+adrci
+SHOW HOMES
+-- caso precise setar a instância
+SET HOMEPATH diag/rdbms/...;
+
+-- Ver os logs
+show alert -tail
+show alert -tail 50
+
+-- Exibir o conteúdo de um arquivo de rastreamento específico
+show tracefile <nome_do_arquivo>
+
+exit
+
+
+--sair 
+exit
+
+
+--------------------
+tail /var/log/syslog -- exibe as últimas 10 linhas do log do sistema
+
+
+less  /...../alert_xx.log
+
+}
+
+{TNSNAMES.ORA
+--srvctl config scan
+cd $ORACLE_HOME
+cd network/admin/
+cat tnsnames.ora
+lsnrctl status
+
+}
+
+{VERIFICAR USUÁRIOS NO ORACLE
+-- #usuários de serviço
+SELECT USERNAME, PROFILE, ACCOUNT_STATUS, EXPIRY_DATE, LAST_LOGIN, CREATED 
+FROM DBA_USERS WHERE USERNAME LIKE 'S%' AND USERNAME NOT IN('SYS', 'SYSTEM', 'SYSBACKUP', 'SYSRAC', 'SYSKM', 'SYS$UMF', 'SYSDG');
+}
+
+{KILL SESSION
+
+ALTER SYSTEM KILL SESSION '8352,21829' IMMEDIATE;
+
+}
+}
