@@ -1,0 +1,20 @@
+{-- Testar porta no servidor
+netstat -an | findstr :1533
+netstat -an | findstr :1433
+}
+
+{-- Testar conexão com o banco pela porta (no servidor)
+sqlcmd -S nome_servidor,1533 -d XXXDB001
+sqlcmd -S nome_servidor,1433 -d XXXDB001
+}
+
+{-- Executar pelo sqlcmd
+-- Local
+sqlcmd -S NOMESERVIDOR\NOMEINSTANCIA -U DOMINIO\USER -P SENHA -i  "Caminho_do_arquivo"
+
+-- Pelo Servidor do banco
+sqlcmd -S localhost\NOMEINSTANCIA -E -i "Caminho_do_arquivo"
+
+}
+
+
