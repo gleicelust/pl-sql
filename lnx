@@ -1,0 +1,127 @@
+-- verificar o ip
+ip a
+
+-- verificar o hostname
+uname -n
+-- todas as informações disponíveis sobre o sistema
+uname -a
+
+-- Mostra o caminho para o diretório atual (da pasta) em que você está
+pwd
+
+-- Navegar pelo filesystem do Linux
+cd -- para ir diretamente para a pasta home
+cd.. --(com dois pontos seguidos) para mover um diretório acima
+cd– --(com um hífen) para mover para os diretórios anteriores.
+
+-- Visualizar conteúdos em um diretório
+ls /home/username/Documents -- para ver os conteúdos de Documents
+ls -R -- vai listar todos os arquivos nos subdiretórios
+ls -a -- vai mostrar todos os arquivos ocultos
+ls -al -- vai listar todos os arquivos e diretórios com informações detalhadas como permissões, tamanho, proprietário, etc.
+ls -ltrh
+ls -ltr
+
+
+-- Visualizar o conteúdo de um arquivo na saída padrão (sdout) sem páginas
+cat nome_arquivo.extensao
+
+-- Visualizar as primeiras linhas de um arquivo de texto
+head nomedoarquivo.txt-- ver as primeiras linhas de um arquivo de texto
+head head -n 5 nomedoarquivo.txt -- ver apenas as 5 primeiras linhas
+
+-- Visualizar as últimas linhas de um arquivo de texto
+tail nomedoarquivo.txt -- padrão - exibe as últimas 10 linhas
+tail -20 nomedoarquivo.txt -- exibe as últimas 20 linhas
+tail -f nomedoarquivo.txt -- segue o arquivo em tempo real, atualizando a saída
+tail +n nomedoarquivo.txt -- ignora as primeiras "n" linhas
+
+tail /var/log/syslog -- exibe as últimas 10 linhas do log do sistema
+tnsping ORARAC
+
+-- Visualizar conteudo de arquivo de texto ou saída de comando (em páginas) .txt .sql .sh ...
+more nomedoarquivo.txt
+more nomedoarquivo.log
+---Espaço: avança para a próxima página
+---Enter: avança uma linhas
+---'b': volta para a página anterior
+---'q': Sair
+---'/': Pesquisar texto
+
+-- Copiar arquivo do diretório atual em que você estiver
+cp scenery.jpg /home/username/Pictures -- vai criar uma cópia de scenery.jpg para o diretório Pictures.  
+
+-- Mover arquivos / renomear arquivos.
+mv file.txt /home/username/Documents -- vai mover o arquivo file.txt para o diretório Documents.
+mv nomeantigo.ext nomenovo.ext. -- para renomear 
+
+-- COMPRIMIR ARQUIVO 
+gzip expdp_FGG_TAS000044897048.dmp
+
+-- Para descomprimir
+gunzip nome_do_arquivo.dmp.gz
+
+
+
+-- Criar um novo diretório 
+mkdir Music
+mkdir Music/Newfile -- gerar um novo diretório(Newfile) dentro de outro diretório (Music)
+mkdir -p Music/2020/Newfile -- criar um diretório(2020) entre dois diretórios existentes
+
+-- Apagar (deletar) um diretório (apenas diretórios vazios)
+rmdir
+
+-- Apagar um diretório 
+rm -- deletar o diretório e todos os conteúdos (CUIDADO)
+rm -r --deletar só o diretório 
+rm nome_do_arquivo.dmp --deletar arquivo no diretório
+
+
+-- Criar novos arquivos em branco 
+touch /home/username/Documents/Web.html -- cria um arquivo HTML chamado Web dentro do diretório Documents.
+
+-- Localizar um arquivo
+locate 
+locate -i --insensível a caracteres, permitindo que você pesquise por um arquivo não sabendo exatamente o nome dele
+locate -i school*note -- procurar um arquivo que contém duas ou mais palavras
+
+-- Localizar arquivos dentro de um diretório específico
+find /home/ -name notes.txt -- para procurar por um arquivo chamado notes.txt dentro do diretório home e seus subdiretórios
+find . -name notes.txt -- encontrar arquivos no diretório atual
+/ -type d -name notes.txt -- procurar por diretórios
+
+-- Procurar através de todo texto dentro de um arquivo específico
+grep blue notepad.txt -- procurar pela palavra blue no arquivo notepad. Linhas que contêm a palavra pesquisadas serão mostradas por completo.
+
+-- Mostra quantidade de espaço de disco usado no sistema
+df -- em KBs
+df -m -- em MBs
+
+-- Mostra o quanto de espaço um arquivo ou um diretório ocupa
+du -h
+
+-- Verifica configuração de data/hora/timzone do servidor
+timedatectl
+
+
+
+-- Exibe quem está logado e o que cada usuário está fazendo
+wc
+-- sem cabeçalhos
+wc -l
+
+--exibir o conteúdo do arquivo oratab
+cat /etc/*-oratab                                       */
+
+-- listar todos os processos em execução no sistema
+ps -ef
+
+--buscar qualquer arquivo no diretório /etc que termine com -release
+cat /etc/*-release                                          */
+
+
+
+crontab -l
+
+PESQUISAR
+permissões chmod
