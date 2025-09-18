@@ -1,0 +1,100 @@
+----- BANCO DE DADOS -----
+
+{LOCK 
+
+{-- LOCK PESSIMISTA/OTIMISTA
+
+O sql server diferentemente do oracle mysql e postgre, o sql server por padrão trabalha com LOCK PESSIMISTA
+
+- select bloqueia update, insert delete
+- update, insert delete bloqueia select
+
+Alguns programadores usam de forma equivocada a cláusula with no lock, que pode levar a ler dados sujos, que não foram comitados.
+
+Já o oracle mysql e postgre trabalham com LOCK OTIMISTA
+
+- pode rodar ao mesmo tempo um update e um select
+- processos diferentes podem ao mesmo tempo alterar e ler um dado, usando as mesmas páginas de dados
+
+Nesse caso, o oracle trabalha com versionamento dos dados, quando vc tenta executar um dml o oracle pega essas informações como estavam antes e jogam na area de UNDO (undo tablespace).
+}
+
+{-- LOCKS NO ORACLE
+
+No Oracle, os bloqueios funcionam de maneira diferente em comparação ao SQL Server. No Oracle, um SELECT não bloqueia UPDATE, INSERT ou DELETE, e vice-versa. No entanto, existem situações em que uma sessão pode bloquear outra:
+
+    -- BLOQUEIO DE LINHA (TX): Quando uma transação está atualizando uma linha, ela adquire um bloqueio exclusivo (TX) nessa linha. Se outra transação tentar atualizar a mesma linha, ela ficará bloqueada até que a primeira transação seja concluída.
+
+    -- BLOQUEIO DE TABELA (TM): Durante operações DML (como UPDATE, INSERT ou DELETE), o Oracle adquire um bloqueio de tabela no modo compartilhado (TM). Isso permite que múltiplas transações modifiquem diferentes linhas na mesma tabela, mas impede operações DDL destrutivas (como DROP TABLE) enquanto houver transações ativas.
+
+    -- BLOQUEIO DE CACHE DE BIBLIOTECA (LIBRARY CACHE LOCK) armazena comandos SQL e PL/SQL: Este tipo de bloqueio ocorre quando há contenção no cache de biblioteca, geralmente durante a compilação de objetos PL/SQL ou SQL. Sessões que tentam acessar o mesmo objeto podem ficar bloqueadas até que a compilação seja concluída
+	
+	-- DEADLOCKS: Em casos raros, duas transações podem ficar bloqueadas mutuamente, cada uma esperando que a outra libere um recurso. Isso é conhecido como deadlock. O Oracle detecta automaticamente deadlocks e resolve um deles, liberando os recursos.
+
+}
+
+}
+
+{ORA: CACHE DE BIBLIOTECA
+
+O cache de biblioteca (Library Cache) no Oracle é uma área de memória usada para armazenar comandos SQL e PL/SQL executados recentemente. Ele desempenha um papel crucial na performance do banco de dados, pois permite que o Oracle reutilize instruções SQL e PL/SQL já compiladas, evitando a necessidade de recompilação a cada execução.
+
+Principais Características do Cache de Biblioteca:
+
+    ARMAZENAMENTO DE COMANDOS: O cache de biblioteca guarda comandos SQL e PL/SQL, incluindo seus planos de execução. Isso acelera a execução de comandos repetidos, pois o Oracle pode reutilizar os planos já existentes.
+	
+    REDUÇÃO DE CONTENÇÃO: Ao armazenar comandos e seus planos de execução, o cache de biblioteca ajuda a reduzir a contenção e melhora a eficiência do banco de dados.
+	
+    GERENCIAMENTO DE MEMÓRIA: O Oracle gerencia o cache de biblioteca dinamicamente, ajustando o uso de memória conforme necessário para otimizar a performance.
+
+
+Seleção de Comandos no Cache de Biblioteca:
+
+    Comandos Frequentemente Usados: O Oracle prioriza o armazenamento de comandos que são executados com frequência. Isso inclui instruções SQL e PL/SQL que são repetidamente chamadas pelo sistema.
+	
+    Planos de Execução: Além dos comandos, o cache de biblioteca também armazena os planos de execução associados a esses comandos. Isso permite que o Oracle reutilize esses planos sem precisar recalculá-los a cada execução.
+
+	
+}
+
+{USUÁRIOS
+
+USUÁRIO ORACLE
+
+o usuário do sistema operacional chamado geralmente de oracle (ou outro nome definido durante a instalação) é fundamental para diversas tarefas administrativas. Esse usuário tem permissões específicas no sistema operacional que são necessárias para interagir com os binários e arquivos do Oracle. Aqui estão as principais manutenções que só podem ser feitas com o usuário oracle (ou equivalente):
+ 
+ • Inicializar ou parar a instância do banco de dados
+ • Gerenciar o Oracle Listener (lsnrctl start / lsnrctl stop / lsnrctl status)
+ • Acessar e modificar arquivos críticos ($ORACLE_HOME/dbs/spfile*.ora / $ORACLE_HOME/network/admin/tnsnames.ora / $ORACLE_BASE/diag/... (logs e traces))
+ 
+ 
+ USUARIO SYS
+ 
+ Usuário administrativo principal do banco de dados Oracle.
+  🧠 Dono do dicionário de dados (todas as tabelas internas do Oracle).
+  🔧 Utilizado para tarefas críticas como criação de banco, recuperação, backup e manutenção.
+  🚫 Não recomendado para uso diário ou desenvolvimento — use SYSTEM ou outro usuário com privilégios.
+  🔑 Conecta-se com o privilégio AS SYSDBA ou AS SYSOPER, por exemplo
+  
+  
+
+ 
+ ******************************************************************************************************************************
+ 
+ sqlplus nome_user/Senha//IP:porta/instancia
+
+ 
+ sudo su - oracle # sudo para obter permissões de superusuário. su - oracle p/ trocar p/ usuário oracle com login completo (carregando variáveis de ambiente, como se tivesse feito login diretamente)
+ sudo -u oracle <comando> -- # Executa um comando como o usuário oracle, sem abrir um novo shell.
+ sudo -u oracle ls /home/oracle -- 
+ 
+ 
+
+ 
+ 
+
+
+
+
+ 
+}
