@@ -1,0 +1,67 @@
+-- DG --
+SQL> sho parameter uniq
+SQL> sho parameter create
+
+
+
+-- ###   Tablespace   ###
+
+
+
+-- 1. VERIFICA DETALHES DE UM TABLESPACE EM GB
+SELECT
+    file_name, file_id, tablespace_name, ROUND(bytes / (1024*1024*1024), 2) AS size_gb, blocks, status, relative_fno, autoextensible, ROUND(maxbytes / (1024*1024*1024), 2) AS max_size_gb, maxblocks, increment_by, ROUND(user_bytes / (1024*1024*1024), 2) AS user_size_gb, user_blocks, online_status
+FROM
+    dba_data_files
+WHERE
+    tablespace_name = 'XXXXXXXXX';
+
+
+
+-- 2. VERIFICA O(S) DATAFILE(S) DO TABLESPACE (ESPAÇO ALOCADO):
+SELECT TABLESPACE_NAME, FILE_NAME, TO_CHAR(BYTES/1024/1024) AS SIZE_MB FROM DBA_DATA_FILES WHERE TABLESPACE_NAME = 'XXXXXXXXX';
+-- o nome do diskgoup associado ao tablespace aparece no início do FILE_NAME
+
+
+-- 3. VERIFICA O ESPAÇO USADO NA TABLESPACE
+SELECT TABLESPACE_NAME, TO_CHAR(SUM(BYTES)/1024/1024) MB FROM DBA_SEGMENTS GROUP BY TABLESPACE_NAME ORDER BY 1;
+--ou
+SELECT TABLESPACE_NAME, TO_CHAR(SUM(BYTES)/1024/1024) MB FROM DBA_SEGMENTS WHERE TABLESPACE_NAME = 'XXXXXXXXX' GROUP BY TABLESPACE_NAME;
+--ou
+SELECT TABLESPACE_NAME, BYTES / 1024 / 1024 AS MB_TOTAL, FREE_SPACE / 1024 / 1024 AS MB_FREE FROM DBA_TABLESPACE_USAGE_METRICS;
+
+
+-- 4. VERIFICAR SE UM DATAFILE ATINGIU O LIMITE MÁXIMO OU SE AINDA PODE SER REDIMENSIONADO (RESIZE)
+SELECT FILE_NAME, AUTOEXTENSIBLE, BYTES / 1024 / 1024 AS CURRENT_SIZE_MB, MAXBYTES / 1024 / 1024 AS MAX_SIZE_MB FROM DBA_DATA_FILES;
+
+-- 5. CHECAR SE TEM ESPAÇO NO DISKGROUP PARA ADICIONAR OU AUMENTAR O DATAFILE:
+SELECT
+    name group_name, sector_size, block_size, allocation_unit_size, state, type, total_mb, free_mb, (total_mb - free_mb) used_mb, ROUND((1- (free_mb / total_mb))*100, 2)  pct_used
+FROM
+    v$asm_diskgroup;
+--WHERE name = 'XXXXXXXXX';
+
+
+-- 6. AUMENTAR/DIMINUIR TAMANHO DO DATAFILE 
+ALTER DATABASE DATAFILE '+DGXXX/...' RESIZE 1G; --32767M
+
+
+-- 7. ADICIONAR UM NOVO DATAFILE PARA A TABLESPACE
+ALTER TABLESPACE SYSAUX ADD DATAFILE '+DG_DATA' SIZE 27151360K AUTOEXTEND ON NEXT 131072K; --MAXSIZE 33552384K;
+ALTER TABLESPACE XXXXXXXXX ADD DATAFILE '+DGXX_01' SIZE 25G AUTOEXTEND ON NEXT 128M MAXSIZE 32G;
+
+
+
+-- OBS.:
+/* Na view DBA_DATA_FILES
+BLOCKS -> representa o tamanho atual do datafile em termos de blocos. Ex: se o datafile tem 1280 blocos e o tamanho do bloco é 8KB, o tamanho total do datafile será: 1280 blocos * 8KB = 10.240 KB (10MB).
+MAXBYTES -> indica o tam. máximo em bytes que o datafile pode atingir se autoextend estiver habilitado. Se o autoextend ñ estiver habilitado o valor será 0 e nesse caso o datafile ñ pode crescer além do tam. atual
+MAXBLOCKS 
+
+
+
+
+
+
+*/
+
