@@ -1,0 +1,166 @@
+(############ MSSQL ############
+
+--  VERIFICAR OBJETO
+select * from sys.all_objects where name in('');
+	
+-- VERIFICAR TABELA
+	SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'DBO' AND TABLE_NAME = 'XXXXXX';
+	
+--  VERIFICAR SE HÁ ESPAÇO SUFICIENTE EM DISCO PARA OS ARQUIVOS DE DADOS E LOG
+	exec sp_spaceused;
+	exec sp_spaceused '';
+	
+	
+   -- AZURE
+DB_NAME() AS [Database Name],
+SUM(reserved_page_count) * 8 / 1024 AS [Size (MB)]
+FROM sys.dm_db_partition_stats;
+
+	
+--  VERIFIQUE SE A BASE JÁ EXISTE
+	select name, create_date, collation_name, user_access_desc, state_desc, recovery_model_desc FROM sys.databases where name = '';
+	
+-- VERIFICAR COLUNA
+SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'NomeDaTabela' AND COLUMN_NAME = 'NomeDaColuna'
+	
+-- VERIFICAR ÍNDICE
+SELECT name FROM sys.indexes WHERE name = 'NomeDoIndice' AND object_id = OBJECT_ID('NomeDaTabela')
+	
+--  VERIFIQUE AS DEPENDÊNCIAS DO OBJETO (OBJETOS QUE DEPENDEM DO OBJETO QUE ESTÁ SENDO DROPADO/CRIADO)
+	select OBJECT_NAME(referencing_id) AS referencing_object, *	from sys.sql_expression_dependencies where referenced_id = OBJECT_ID('XXXXXX');
+	-- para verificar dependências da coluna
+	select OBJECT_NAME(referencing_id) AS referencing_object, * from sys.sql_expression_dependencies where referenced_entity_name = 'XXXXXX' AND referenced_id = OBJECT_ID('XXXXXX'); 
+		
+		
+--  NO CASO DE DROP DE TABELA, VERIFIQUE SE ESSA TABELA POSSUI CAMPO PK E SE ESSE CAMPO É FK EM OUTRA TABELA (VERIFICAR PROPRIEDADES DO OBJETO)
+	Selecione o objeto e pressione Alt + F1 (sp_help) 
+
+--  NO CASO DE CREATE TABLE, VERIFIQUE SE HÁ CRIAÇÃO DE CONSTRAINTS FK (ADD CONSTRAINT) VERIFIQUE SE A TABELA REFERENCIADA EXISTE E SE O CAMPO/COLUNA REFERENCIADA EXISTE E SE É PK.
+	select * from sys.all_objects where name in('Nome_da_Tabela_Referenciada / Nome_da_PK');
+	
+	--verifique tm se a PK criada referencia um campo not null da tabela
+
+--	AO ALTERAR O TIPO DE DADOS DE UMA COLUNA OU ADICIONAR UMA NOVA, É IMPORTANTE VERIFICAR SE HÁ ÍNDICES OU ESTATÍSTICAS QUE PODEM SER AFETADOS.
+	select i.name, i.type_desc from sys.indexes i where i.object_id = OBJECT_ID('table_name');
+
+
+)
+
+
+(############ ORA ############
+--	VERIFICAR OBJETO (exceto índice e constraint)
+select owner, object_name, object_type, status from all_objects where object_name = 'XXX';
+	
+-- VERIFICA TAMANHO DO SCHEMA
+SELECT OWNER, SUM(BYTES) / 1024 / 1024 AS SIZE_MB FROM DBA_SEGMENTS WHERE OWNER = 'XXX' GROUP BY OWNER;
+SELECT OWNER, ROUND(SUM(BYTES) / 1024 / 1024) AS SIZE_MB FROM DBA_SEGMENTS WHERE OWNER = 'XXX' GROUP BY OWNER;	
+
+-- VERIFICA TAMANHO DO OBJETO
+select segment_name, round(sum(bytes) / 1024, 2) as tamanho_kb from dba_segments where owner = 'XXX' and segment_name = 'TB_XXX' group by segment_name;
+
+--	VERIFICAR SCHEMA/OWNER 
+select owner, object_name, object_type, status from all_objects where owner = 'XXX';
+	
+--  VERIFICAR ÍNDICE 
+select * from all_indexes where index_name = '';
+	
+--	VERIFICAR CONSTRAINT 
+select constraint_name, constraint_type from all_constraints where constraint_name = '';
+	
+--  VERIFICAR COLUNA
+select owner, table_name, column_name, data_type, nullable, data_default, data_precision from all_tab_columns where table_name = '' and column_name = '';
+			
+--	VERIFICAR TABELA 
+select * from dba_tables where table_name ='TB_XXX';   -- where table_name like '%OPB'
+
+--  VERIFICAR VIEW 
+select view_name from all_views where view_name = '';
+
+--	VERIFICAR PROCEDURE / FUNÇÃO
+select object_name, object_type from all_objects where object_name = '' and object_type in ('PROCEDURE', 'FUNCTION');
+
+-- VERIFICAR TRIGGER
+select trigger_name from all_triggers where trigger_name = '';
+		
+--	VERIFICAR SEQUENCE
+select * from all_sequences where sequence_name = '';
+	
+--  VERIFICA TABLESPACE
+SELECT tablespace_name, status, online_status FROM dba_data_files WHERE tablespace_name = '';
+
+-- CHECAR COMENTÁRIOS DAS TABELAS
+select OWNER,TABLE_NAME,COMMENTS from ALL_TAB_COMMENTS where owner='XXX';
+	
+************************************************
+************ VERIFICAR DEPENDÊNCIAS ************
+************************************************
+
+-- Verificar se a coluna é usada em uma CONSTRAINT (PK, FK, Unique, Check)**
+SELECT ac.constraint_name, ac.constraint_type, acc.table_name, acc.column_name
+FROM all_cons_columns acc
+JOIN all_constraints ac
+    ON acc.constraint_name = ac.constraint_name
+   AND acc.owner = ac.owner
+WHERE acc.table_name = 'NOME_DA_TABELA'
+AND acc.column_name = 'NOME_DA_COLUNA';
+
+-- * constraint_type *
+  - `P` → Primary Key  
+  - `R` → Foreign Key  
+  - `U` → Unique  
+  - `C` → Check  
+
+-- Verificar se a coluna é usada em um ÍNDICE**
+SELECT ai.index_name, ai.table_name, aic.column_name
+FROM all_ind_columns aic
+JOIN all_indexes ai
+    ON aic.index_name = ai.index_name
+   AND aic.table_name = ai.table_name
+WHERE aic.table_name = 'NOME_DA_TABELA'
+AND aic.column_name = 'NOME_DA_COLUNA';
+
+--  Verificar se a coluna é usada em uma VIEW
+SELECT av.view_name, avc.column_name
+FROM all_views av
+JOIN all_tab_columns avc
+    ON av.view_name = avc.table_name
+WHERE avc.column_name = 'NOME_DA_COLUNA';
+
+-- Verificar se a coluna é usada em um TRIGGER**
+SELECT at.trigger_name, at.table_name
+FROM all_triggers at
+WHERE at.table_name = 'NOME_DA_TABELA'
+AND at.trigger_body LIKE '%NOME_DA_COLUNA%';
+
+--  Verificar se a coluna é usada em PROCEDURES ou FUNCTIONS**
+SELECT ao.object_name, ao.object_type
+FROM all_source ao
+WHERE ao.text LIKE '%NOME_DA_COLUNA%'
+AND ao.type IN ('PROCEDURE', 'FUNCTION');
+
+
+)
+
+
+
+
+{** VERIFICAÇÕES GERAIS **
+****************   -  ORA  -   ***********************
+--Criação de Tabelas
+precisa conter a tablespace de índice e tablespace da tabela
+
+
+}
+
+## Observações ##
+(
+
+# No caso de SQL SERVER:
+		# Verifique se tem o USE database
+		# Verifique se os blocos estão terminando com o acomando GO [Em script com cláusula CREATE\ALTER\REPLACE\DROP, é obrigatório fechar o bach com o GO].
+		# Caso o objeto já exista, deverá conter no script a cláusula DROP IF EXISTS, porém mesmo com o uso desta cláusula erros podem ocorrer se existirem dependências associadas ao objeto
+)
+
+
+
+
