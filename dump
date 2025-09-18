@@ -1,0 +1,97 @@
+select directory_name, directory_path from dba_directories;
+select directory_name, directory_path from dba_directories where directory_name = 'DATA_PUMP_DIR';
+
+
+/u01/app/oracle/admin/desb2b01/dpdump/
+
+
+--### DUMP SCHEMA #### 
+
+1. # logar no servidor oracle
+2. # setar a instância (variáveis)
+     ps -ef | grep pmon -- verifica as instâncias
+
+3. # abrir diretório que contém o arquivo de parâmetros
+cd /../...
+ls
+-- O arquivo de parâmetros é o: 
+schema_XXX.par
+
+4. # Editar o arquivo de parâmetro
+vi schema_XXX.par
+    -- digitar i (insert)
+	-- usar setas < ^ > para navegar no arquivo
+	-- para colar, clicar com o auxiliar
+	-- sair da edição: 
+	ESC
+	-- salvar e sair:
+	:wq
+	
+	
+
+	
+#-- Executar o dump com parfile
+expdp \"/ as sysdba\" parfile=schema_XXX.par
+
+
+"
+-- EXPORT schema ZZZ
+nohup expdp \'/ as sysdba \' schemas=ZZZ directory=DATA_PUMP_DIR dumpfile=expdp_ZZZ.dmp logfile=expdp_ZZZ.log CLUSTER=N compression=all FLASHBACK_TIME=systimestamp EXCLUDE=STATISTICS &
+
+'
+
+#-- IMPORT SCHEMA ZZZ
+nohup impdp \'/ as sysdba \' schemas=ZZZ parallel=10 directory=DATA_PUMP_DIR TABLE_EXISTS_ACTION=REPLACE dumpfile=expdp_ZZZ.dmp logfile=imp_ZZZ.log cluster=N &
+
+
+'
+
+tail -f nohup.out
+
+
+
+
+-- VERIFICAR DUMP EM ANDAMENTO
+ps -ef | grep expdp
+
+
+
+
+
+!hostname
+select instance_name from gv$instance;
+select username from dba_users where username = 'XXX';
+
+
+ls -l | grep expdp_ZZZ.dmp
+
+
+
+#########################################################################
+################################ IMPORT  ################################
+#########################################################################
+
+-- Verificar os tablespaces vinculados ao schema
+SELECT DISTINCT u.username AS schema_name, s.tablespace_name FROM dba_segments s JOIN dba_users u ON s.owner = u.username WHERE u.username = 'XXX';
+	
+	
+ 
+-----------------------------------------------------------
+ 
+ -- Consultar DATAFILES
+SELECT tablespace_name, file_name, bytes/1024/1024 AS size_mb FROM dba_data_files;
+
+-- Consulta espaço no DG 
+SELECT name, total_mb, free_mb, ROUND((free_mb / total_mb) * 100, 2) AS pct_livre FROM v$asm_diskgroup WHERE name = 'DG_001';
+
+-- Cria tablespaces
+CREATE TABLESPACE "XXXXXXX" DATAFILE '+DG_001' SIZE 500M AUTOEXTEND ON NEXT 100M MAXSIZE 1G;
+CREATE TABLESPACE "XXXXXXX" DATAFILE '+DG_001' SIZE 500M AUTOEXTEND ON NEXT 100M MAXSIZE 1G;
+
+
+-- Verifica roles e usuarios
+
+
+GERAR DDL DA TABLESPACE
+set long 200000000
+SELECT DBMS_METADATA.GET_DDL('TABLESPACE','SGFTSDT001' ) FROM DUAL;
