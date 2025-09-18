@@ -1,0 +1,89 @@
+-- OWNER DA TABELA
+select owner from dba_tables where table_name = 'OFTP_OBJECT' and owner = 'XXX';
+
+
+-- PLANO DE EXECUÇÃO DA QUERY
+select * from table(dbms_xplan.display_cursor('758gh3sfy7as'));
+
+
+
+------- PLANO DE EXECUÇÃO MAIS DETALHADO
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR('758gh3sfy7as', NULL, 'ALLSTATS LAST'));
+------- Esse formato mostra estatísticas reais da última execução, como número de linhas processadas por etapa.
+
+------- TABLE ACCESS FULL: varredura completa da tabela (pode ser custoso).
+------- INDEX RANGE SCAN: uso de índice (mais eficiente).
+------- JOIN: tipo de junção usada (HASH, NESTED LOOP, MERGE).
+------- Cost: Quanto maior o custo, mais recursos o Oracle estima que serão usados.
+------- Veja se há paralelismo: Indicado por operações como PX SEND, PX RECEIVE.
+------- Se o plano mostrar Note: cardinality feedback used, significa que o Oracle ajustou o plano com base em execuções anteriores.
+
+
+--JOIN, ele está indicando que o Oracle está combinando dados de duas ou mais tabelas. O tipo de junção usado pode impactar diretamente o desempenho da consulta.
+-- NESTED LOOP JOIN
+    Como funciona: Para cada linha da tabela externa (a primeira), o Oracle procura correspondências na tabela interna (a segunda).
+    Quando é eficiente: Quando a tabela interna tem poucos registros ou está bem indexada.
+    Exemplo: Boa para joins entre uma tabela pequena e uma grande com índice.
+Vantagens:
+    Rápido para poucos dados.
+    Usa índices com eficiência.
+Desvantagens:
+    Pode ser lento com grandes volumes sem índice.
+
+-- HASH JOIN
+    Como funciona: O Oracle cria uma tabela hash na memória com os dados da tabela menor e compara com os dados da tabela maior.
+    Quando é eficiente: Quando não há índices e as tabelas são grandes.
+    Exemplo: Joins entre grandes tabelas sem índice.
+Vantagens:
+    Escala bem com grandes volumes.
+    Não depende de índices.
+Desvantagens:
+    Usa mais memória.
+    Pode gerar I/O se não couber na memória.
+
+	
+-- MERGE JOIN
+    Como funciona: Oracle ordena ambas as tabelas e faz a junção comparando os dados ordenados.
+    Quando é eficiente: Quando ambas as tabelas já estão ordenadas ou têm índices que permitem ordenação rápida.
+    Exemplo: Joins entre tabelas com índices em colunas de junção.
+Vantagens:
+    Muito eficiente com dados ordenados.
+    Boa performance com grandes volumes.
+Desvantagens:
+    Requer ordenação prévia (sort), que pode ser custosa.
+
+	
+-- PLANO DE EXPLICAÇÃO EXPLAIN PLAN
+EXPLAIN PLAN FOR <sua consulta>;
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY);
+
+	
+-- COUNT TABELA COM PARALLEL
+select /*+parallel(5)*/count(1) from XXX.TABLE_NAME;
+select /*+parallel(5)*/count(1) from XXX.TABLE_NAME;
+
+
+-- COLETAR ESTATÍSTICAS
+select table_name,last_analyzed from dba_tables where owner = 'XXX' order by 2 asc;
+
+
+-- VERIFICAR ÍNDICES DA TABELA
+select index_name,column_position,column_name from dba_ind_columns where index_owner = 'XXX' and table_name = 'OFTP_OBJECT' order by index_name,column_position;
+
+
+select index_name,tablespace_name from dba_indexes where owner = 'XXX' and table_name = 'OFTP_OBJECT';
+
+
+-- SESSÕES ATIVAS E OS EVENTOS QUE ESTÃO OCORRENDO NELAS 
+select count(1),inst_id,event,sql_id from gv$session where username not in ('SYS','SYSTEM') AND STATUS = 'ACTIVE' GROUP BY inst_id,event,sql_id;
+---------- direct path read: leitura direta de dados do disco, geralmente associada a operações paralelas ou grandes volumes.
+---------- db file scattered read: leitura de múltiplos blocos de dados, comum em varreduras de tabelas (FULL TABLE SCANS).
+
+-- SQL QUE A SESSÃO ESTÁ EXECUTANDO
+select sql_fulltext from v$sqlarea where sql_id = '758gh3sfy7as';
+SELECT sql_text FROM gv$sql WHERE sql_id = '758gh3sfy7as';
+
+		 
+-- TEMPO DE ESPERA E RECURSOS CONSUMIDOS		 
+SELECT inst_id, sid, serial#, event, wait_time, seconds_in_wait FROM gv$session WHERE sql_id = '758gh3sfy7as';
+
